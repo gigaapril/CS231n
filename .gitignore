@@ -155,3 +155,4 @@ cython_debug/
 .vscode
 
 /pytorch-play/data
+/pytorch-play/runs

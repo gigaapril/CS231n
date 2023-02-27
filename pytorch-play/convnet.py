@@ -37,77 +37,73 @@ from torch.utils.tensorboard import SummaryWriter
 writer = SummaryWriter()
 
 #%%
-# classifying cifar10 with convnet defined using nn.Module
-class ConvNet(nn.Module):
-    def __init__(self):
-        super(ConvNet, self).__init__()
-        self.conv1 = nn.Conv2d(3, 6, 5, device='cuda')
-        self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(6, 16, 5, device='cuda')
-        self.fc1 = nn.Linear(16 * 5 * 5, 120, device='cuda')
-        self.fc2 = nn.Linear(120, 84, device='cuda')
-        self.fc3 = nn.Linear(84, 10, device='cuda')
-    
-    def forward(self, x):
-        x = self.conv1(x)
-        x = torch.relu(x)
-        x = self.pool(x)
-        # split into two lines for readability
-        # x = self.pool(torch.relu(self.conv2(x))) 
-        x = self.conv2(x)
-        x = torch.relu(x)
-        x = self.pool(x)
+# classifying cifar10 with resnet50 defined using nn.Module
+import torch.nn as nn
+import torch.nn.functional as F
+import torchvision.models as models
+model = models.resnet50(pretrained=True)
+model.fc = nn.Linear(2048, 10)
 
-        x = x.view(-1, 16 * 5 * 5)
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        x = self.fc3(x)
-        return x
+# Trainig just FC for 20 epochs resulted in 52% test accuracy
+# training last 10 layers gave 66% accuracy
+# training all layers for 20 eochs gave 82% accuracy
+# model unlock training last 10 layers
+# for param in model.parameters():
+#     param.requires_grad = False
 
-# training data ftom dataset
-x = torch.tensor(train_dataset.dataset.data, dtype=torch.float)
-x = x.permute(0, 3, 1, 2)
-y = torch.tensor(train_dataset.dataset.targets, dtype=torch.long, device='cuda')
+# # i = 0
+# # for m in model.modules():
+# #     if isinstance(m, nn.Conv2d):
+# #         i += 1
+# #         if i >= 0:
+# #             for param in m.parameters():
+# #                 param.requires_grad = True
 
+# for param in model.fc.parameters():
+#     param.requires_grad = True
+
+
+model = model.cuda()
+
+#%%
 # train the model
-model = ConvNet()
 loss_fn = nn.CrossEntropyLoss()
-learning_rate = 0.001
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+# learning_rate = 0.00001
+# optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
-train_loader = data_utils.DataLoader(train_dataset, batch_size=1024, shuffle=True)
-val_loader = data_utils.DataLoader(val_dataset, batch_size=1000, shuffle=True)
 
-#%%
-# find the best learning rate using lr finder
-from torch_lr_finder import LRFinder
-lr_finder = LRFinder(model, optimizer, loss_fn, device='cuda')
-lr_finder.range_test(train_loader, val_loader=val_loader, end_lr=1, num_iter=50)
-lr_finder.plot() # to inspect the loss-learning rate graph
-lr_finder.reset() # to reset the model and optimizer to their initial state
+# # find the best learning rate using lr finder
+# from torch_lr_finder import LRFinder
+# lr_finder = LRFinder(model, optimizer, loss_fn, device='cuda')
+# lr_finder.range_test(trainloader, val_loader=valloader, end_lr=1, num_iter=50)
+# lr_finder.plot() # to inspect the loss-learning rate graph
+# lr_finder.reset() # to reset the model and optimizer to their initial state
 
 
 #%%
 
-learning_rate = 1.10E-02
+learning_rate = 5.43E-04
+# learning_rate = 5.43E-03
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
 
 # train the model with tensorboard and trainloader report accuracy
-epochs = 20
+epochs = 200
+global_step = 0
 for epoch in range(epochs):
     model.train()
     for i, (images, labels) in enumerate(trainloader):
-        images = images.to('cuda')
-        labels = labels.to('cuda')
+        images = images.cuda()
+        labels = labels.cuda()
         outputs = model(images)
         loss = loss_fn(outputs, labels)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        global_step += 1
         if (i+1) % 10 == 0:
             print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}' 
                 .format(epoch+1, epochs, i+1, len(trainloader), loss.item()))
-            writer.add_scalar('training loss', loss.item())
+            writer.add_scalar('training loss', loss.item(), global_step)
 
     model.eval()
     with torch.no_grad():
@@ -121,7 +117,7 @@ for epoch in range(epochs):
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
         print('Accuracy of the model on the 10000 test images: {} %'.format(100 * correct / total))
-        writer.add_scalar('validation accuracy', 100 * correct / total)
+        writer.add_scalar('validation accuracy', 100 * correct / total, epoch)
 # %%
 # save the model
 torch.save(model.state_dict(), 'convnet.ckpt')
@@ -144,4 +140,11 @@ with torch.no_grad():
 print(len(testset))
 print(len(val_dataset))
 print(len(train_dataset))
+# %%
+# convert model to torchscript
+model = model.cpu()
+example = torch.rand(1, 3, 32, 32)
+traced_script_module = torch.jit.trace(model, example)
+traced_script_module.save("convnet.pt")
+
 # %%
