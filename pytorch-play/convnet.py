@@ -25,7 +25,7 @@ valloader = data_utils.DataLoader(val_dataset, batch_size=batch_size, shuffle=Tr
 
 # load test dataset with transforms
 testset = datasets.CIFAR10(root=cifar_pwd, train=False, download=True, transform=transform)
-testloader = data_utils.DataLoader(testset, batch_size=batch_size * 2, shuffle=False, num_workers=0)
+testloader = data_utils.DataLoader(testset, batch_size=batch_size, shuffle=False, num_workers=0)
 
 #%%
 print('torch.cuda.is_available()', torch.cuda.is_available())
@@ -41,16 +41,23 @@ writer = SummaryWriter()
 class ConvNet(nn.Module):
     def __init__(self):
         super(ConvNet, self).__init__()
-        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.conv1 = nn.Conv2d(3, 6, 5, device='cuda')
         self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 5 * 5, 120)
-        self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, 10)
+        self.conv2 = nn.Conv2d(6, 16, 5, device='cuda')
+        self.fc1 = nn.Linear(16 * 5 * 5, 120, device='cuda')
+        self.fc2 = nn.Linear(120, 84, device='cuda')
+        self.fc3 = nn.Linear(84, 10, device='cuda')
     
     def forward(self, x):
-        x = self.pool(torch.relu(self.conv1(x)))
-        x = self.pool(torch.relu(self.conv2(x)))
+        x = self.conv1(x)
+        x = torch.relu(x)
+        x = self.pool(x)
+        # split into two lines for readability
+        # x = self.pool(torch.relu(self.conv2(x))) 
+        x = self.conv2(x)
+        x = torch.relu(x)
+        x = self.pool(x)
+
         x = x.view(-1, 16 * 5 * 5)
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
@@ -65,12 +72,13 @@ y = torch.tensor(train_dataset.dataset.targets, dtype=torch.long, device='cuda')
 # train the model
 model = ConvNet()
 loss_fn = nn.CrossEntropyLoss()
-learning_rate = 2.48E-01
+learning_rate = 0.001
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
 train_loader = data_utils.DataLoader(train_dataset, batch_size=1024, shuffle=True)
 val_loader = data_utils.DataLoader(val_dataset, batch_size=1000, shuffle=True)
 
+#%%
 # find the best learning rate using lr finder
 from torch_lr_finder import LRFinder
 lr_finder = LRFinder(model, optimizer, loss_fn, device='cuda')
@@ -81,11 +89,11 @@ lr_finder.reset() # to reset the model and optimizer to their initial state
 
 #%%
 
-learning_rate = 2.86E-01
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+learning_rate = 1.10E-02
+optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
 
 # train the model with tensorboard and trainloader report accuracy
-epochs = 10
+epochs = 20
 for epoch in range(epochs):
     model.train()
     for i, (images, labels) in enumerate(trainloader):
@@ -114,4 +122,26 @@ for epoch in range(epochs):
             correct += (predicted == labels).sum().item()
         print('Accuracy of the model on the 10000 test images: {} %'.format(100 * correct / total))
         writer.add_scalar('validation accuracy', 100 * correct / total)
+# %%
+# save the model
+torch.save(model.state_dict(), 'convnet.ckpt')
+
+# %%
+# test the model
+model.eval()
+with torch.no_grad():
+    correct = 0
+    total = 0
+    for images, labels in testloader:
+        images = images.to('cuda')
+        labels = labels.to('cuda')
+        outputs = model(images)
+        _, predicted = torch.max(outputs.data, 1)
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
+    print('Accuracy of the model on the {} test images: {} %'.format(total, 100 * correct / total))
+# %%
+print(len(testset))
+print(len(val_dataset))
+print(len(train_dataset))
 # %%
